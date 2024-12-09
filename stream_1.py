@@ -11,6 +11,17 @@ import seaborn as sns
 api_key = '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'
 Client = Groq(api_key=api_key)
 
+# Hide the GitHub icon/link
+st.set_page_config(
+    page_title="Your App Title",
+    page_icon="🧊",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
+)
+
 # Read glossary
 with open('rag.txt', 'r') as f:
     glossary = f.read()
