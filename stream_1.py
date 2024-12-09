@@ -13,16 +13,16 @@ api_key_2 = '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'
 Client = Groq(api_key=api_key)
 Client_2 = Groq(api_key=api_key_2)
 
-# # Hide the GitHub icon/link
-# st.set_page_config(
-#     page_title="Your App Title",
-#     page_icon="🧊",
-#     menu_items={
-#         'Get Help': None,
-#         'Report a bug': None,
-#         'About': None
-#     }
-# )
+# Hide the GitHub icon/link
+st.set_page_config(
+    page_title="Your App Title",
+    page_icon="🧊",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
+)
 
 # Read glossary
 with open('rag.txt', 'r') as f:
