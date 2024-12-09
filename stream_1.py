@@ -9,18 +9,20 @@ import matplotlib.pyplot as plt
 import seaborn as sns 
 
 api_key = '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'
+api_key_2 = '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'
 Client = Groq(api_key=api_key)
+Client_2 = Groq(api_key=api_key_2)
 
-# Hide the GitHub icon/link
-st.set_page_config(
-    page_title="Your App Title",
-    page_icon="🧊",
-    menu_items={
-        'Get Help': None,
-        'Report a bug': None,
-        'About': None
-    }
-)
+# # Hide the GitHub icon/link
+# st.set_page_config(
+#     page_title="Your App Title",
+#     page_icon="🧊",
+#     menu_items={
+#         'Get Help': None,
+#         'Report a bug': None,
+#         'About': None
+#     }
+# )
 
 # Read glossary
 with open('rag.txt', 'r') as f:
@@ -32,6 +34,12 @@ class FlexibleQuerySystem:
         self.df = None
         self.table_info = None
         self.glossary = glossary
+        self.last_query_context = {
+            'query' : None, 
+            'equipment_ids' : set(),
+            'result_df': None,
+            'sql_query': None
+        }
 
     def load_data(self, csv_file: str, db_name: str = "serviceai.db", table_name: str = "serviceai"):
         """Loads data from a CSV file and sets up the SQLite engine."""
@@ -61,6 +69,20 @@ class FlexibleQuerySystem:
 
     def natural_language_to_sql(self, query: str, previous_context: list) -> str:
         """Converts a natural language query into an SQL query and returns the SQL query and token usage."""
+        
+        contextual_words = ['their', 'these', 'those', 'them']
+        is_contextual_query = any(word in query.lower() for word in contextual_words)
+        # Add context about previous query result if it exists
+        context_info = ""
+        if is_contextual_query and self.last_query_context['equipment_ids']:
+            context_info = f"""
+            Previous query was about these specific equipment IDs: 
+            {', '.join(str(id) for id in self.last_query_context['equipment_ids'])}
+            
+            When the current query uses words like 'their', 'these', 'those', it refers to 
+            these specific equipment IDs.
+            """
+        
         prompt = f"""
         Respond with only the SQL query, nothing else.
         
@@ -72,6 +94,9 @@ class FlexibleQuerySystem:
              
         Convert this natural language query to SQL:
         {query}
+        
+        Previous Context: 
+        {previous_context}
         
         Extra context about columns:
 service_id:
@@ -185,7 +210,7 @@ machine_type:
         Keep the response clear, concise and actionable.
         """
 
-        response = Client.chat.completions.create(
+        response = Client_2.chat.completions.create(
             messages=[
                 {
                     "role": "system",
@@ -201,24 +226,79 @@ machine_type:
 
         return response.choices[0].message.content.strip()
     
+    def generate_one_line_answer(self, query_result: pd.DataFrame, user_query: str) -> str:
+        """Generates a one-line natural language answer to the user's query."""
+        result_description = query_result.to_string()
+        
+        one_line_prompt = f"""
+        Based on the query results, provide a ONE SENTENCE answer to the user's question.
+        
+        Original User Query: {user_query}
+        
+        Query Results:
+        {result_description}
+
+        Table Context:
+        {self.table_info}
+
+        Rules for the response:
+        1. Must be EXACTLY one sentence
+        2. Be direct and specific
+        3. Include key numbers/findings
+        4. Use natural language (not technical)
+        5. Start with relevant context (e.g., "For JCB 3DX machines, ..." or "Across all excavators, ...")
+
+        Example format:
+        "For JCB 3DX machines, the actual filter change frequency averages 450 hours compared to the expected 500 hours."
+        """
+
+        response = Client_2.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a maintenance expert providing brief, clear answers."
+                },
+                {
+                    "role": "user",
+                    "content": one_line_prompt
+                }
+            ],
+            model="llama3-70b-8192",
+        )
+
+        return response.choices[0].message.content.strip()
+        
     def execute_query(self, sql_query: str) -> pd.DataFrame:
         """Executes the SQL query and returns the result as a DataFrame."""
         with self.engine.connect() as conn:
             return pd.read_sql(text(sql_query), conn)
+    
+    def update_query_context(self, query: str, result_df: pd.DataFrame, sql_query: str):
+        """Updates the context with information from the current query"""
+        self.last_query_context['query'] = query
+        self.last_query_context['result_df'] = result_df
+        self.last_query_context['sql_query'] = sql_query
         
+        # Extract and store equipment IDs if they're in the result
+        if 'equipment_id' in result_df.columns:
+            self.last_query_context['equipment_ids'] = set(result_df['equipment_id'].unique())
+
+    
     def process_query(self, user_query: str, previous_context: list) -> Dict[str, Any]:
         """Processes the user's natural language query."""
         sql_query, tokens_used = self.natural_language_to_sql(user_query, previous_context)
         result_df = self.execute_query(sql_query)
         
+        self.update_query_context(user_query, result_df, sql_query)
         analysis = self.analyze_results(result_df, user_query)
-        
+        one_line_answer = self.generate_one_line_answer(result_df, user_query)
         return {
             'user_query': user_query,
             'sql_query': sql_query,
             'tokens_used': tokens_used,
             'result': result_df.to_dict(orient='records'),
-            'analysis': analysis
+            'analysis': analysis,
+            'one_line_answer': one_line_answer
         }
 
     def update_glossary(self, feedback: str):
@@ -228,6 +308,12 @@ machine_type:
     def reset(self):
         """Resets the session state."""
         self.previous_context = []
+        self.last_query_context = {
+            'query' : None, 
+            'equipment_ids' : set(),
+            'result_df': None,
+            'sql_query': None
+        }
         self.glossary = glossary
     
     def plot_data(self, df: pd.DataFrame):
@@ -268,6 +354,11 @@ def main():
     # Load data and display the table schema
     query_system.load_data(csv_file, db_file, table_name)
     
+    if 'query_system' not in st.session_state:
+        st.session_state.query_system = FlexibleQuerySystem(glossary)
+        st.session_state.query_system.load_data(csv_file, db_file, table_name)
+
+    
     # Input for user query
     user_query = st.text_input("Enter your query:")
     
@@ -294,8 +385,12 @@ def main():
             # st.write(st.session_state.total_token)
             
             # Display the result as a DataFrame
+            st.subheader("Quick Answer")
+            st.write(result['one_line_answer'])
+            
             st.subheader("Query Results")
             st.dataframe(pd.DataFrame(result['result']))
+            
             
             st.subheader("Analysis")
             st.write(result['analysis'])
