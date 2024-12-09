@@ -43,7 +43,35 @@ Equipment Usage: Tracked through hour meter readings
 Maintenance Compliance: Comparing next_due_hmr vs last_serviced_hmr
 
 
-Query Construction Guidelines
+Interval Analysis Concepts:
+- Actual Service Interval: 
+    Definition: Time/hours between consecutive services for same equipment
+    Calculation: Current last_serviced_hmr - Previous last_serviced_hmr
+    Usage: Use LAG() window function with PARTITION BY equipment_id
+
+- Expected vs Actual Frequency:
+    Expected: Value in maintenance_frequency column
+    Actual: Calculated average of intervals between services
+    Comparison: Important to show both for maintenance analysis
+
+- Equipment Identification:
+    Always include make, model with equipment_id
+    Group analysis by unique equipment to show individual patterns
+    Maintain equipment context in all frequency calculations
+
+Query Construction Guidelines:
+- When analyzing intervals:
+    Step 1: Filter relevant records (machine_type, service_activity, etc.)
+    Step 2: Calculate intervals using LAG() for each equipment_id
+    Step 3: Group by equipment_id, make, model for individual patterns
+    Step 4: Show both expected and actual frequencies
+
+- Required columns in output:
+    - equipment_id (for unique identification)
+    - make and model (for equipment context)
+    - expected_frequency (from maintenance_frequency)
+    - actual_frequency (calculated average interval)
+    - service_count (for context)
 Example - Equipment by Maintenance Frequency:
 
 SELECT make, model, machine_type, COUNT(DISTINCT service_id) as maintenance_count
@@ -53,6 +81,21 @@ GROUP BY make, model, machine_type
 ORDER BY maintenance_count DESC
 LIMIT 5;
 
+
+Common Analysis Patterns: 
+WITH intervals AS (
+    SELECT 
+        equipment_id,
+        make,
+        model,
+        last_serviced_hmr,
+        last_serviced_hmr - LAG(last_serviced_hmr) OVER (
+            PARTITION BY equipment_id 
+            ORDER BY last_serviced_hmr
+        ) as actual_interval
+    FROM maintenance_data
+    WHERE [conditions]
+)
 Special Considerations
 
 
@@ -151,6 +194,46 @@ equipment_averages AS (
 )
 SELECT 
     equipment_id,
+    expected_frequency,
+    ROUND(actual_frequency, 2) as actual_frequency,
+    service_count as number_of_services
+FROM equipment_averages
+ORDER BY equipment_id;
+
+Excavator greasing frequency with make/model:
+
+WITH greasing_intervals AS (
+    SELECT 
+        equipment_id,
+        make,
+        model,
+        last_serviced_hmr,
+        last_serviced_hmr - LAG(last_serviced_hmr) OVER (
+            PARTITION BY equipment_id 
+            ORDER BY last_serviced_hmr
+        ) as actual_interval,
+        maintenance_frequency as expected_frequency
+    FROM maintenance_data
+    WHERE 
+        machine_type = 'Excavator'
+        AND service_activity = 'Greasing'
+),
+equipment_averages AS (
+    SELECT 
+        equipment_id,
+        make,
+        model,
+        MAX(expected_frequency) as expected_frequency,
+        AVG(actual_interval) as actual_frequency,
+        COUNT(*) as service_count
+    FROM greasing_intervals
+    WHERE actual_interval IS NOT NULL
+    GROUP BY equipment_id, make, model
+)
+SELECT 
+    equipment_id,
+    make,
+    model,
     expected_frequency,
     ROUND(actual_frequency, 2) as actual_frequency,
     service_count as number_of_services
