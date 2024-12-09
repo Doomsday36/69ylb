@@ -1,0 +1,158 @@
+General Rules and Guidelines
+
+
+Respond with only the SQL query, nothing else
+Always use LOWER() and LIKE for case-insensitive text searches
+Include wildcard % in LIKE for partial matches
+When calculating maintenance frequencies, ensure each service_id contributes only once
+Use SQL string functions to search for substrings rather than exact matches
+When ordering results to find top entities, use ORDER BY with DESC
+When limiting results, use the LIMIT clause
+For time-based calculations, group by equipment and time period before sorting
+Use appropriate time functions for hour-based calculations
+
+
+Table Schema and Column Definitions
+Main columns:
+
+
+service_id: Unique identifier for each maintenance record
+equipment_id: Identifier for specific equipment
+service_task: Type of task (Maintenance or Service)
+maintenance_frequency: Hours between maintenance
+last_serviced_hmr: Hour meter reading at last service
+next_due_hmr: Hour meter reading for next service
+frequency_unit: Unit of measurement (hours)
+service_activity: Specific maintenance activity performed
+make: Equipment manufacturer
+model: Equipment model number
+machine_type: Type of heavy equipment
+
+
+Key Concepts and Definitions
+
+
+Maintenance Record: Represented by unique service_id
+Service Types: Either routine 'Maintenance' or scheduled 'Service'
+Equipment Performance: Based on service frequency and maintenance patterns
+Service Activities: Include Filter Change, Oil Change, Greasing, Coolant Top up, etc.
+Machine Categories: Different types like Excavator, Backhoe Loader, Dozer, etc.
+Maintenance Patterns: Frequency and type of maintenance by equipment type
+Service Intervals: Hours between maintenance activities
+Equipment Usage: Tracked through hour meter readings
+Maintenance Compliance: Comparing next_due_hmr vs last_serviced_hmr
+
+
+Query Construction Guidelines
+Example - Equipment by Maintenance Frequency:
+
+SELECT make, model, machine_type, COUNT(DISTINCT service_id) as maintenance_count
+FROM maintenance_data
+WHERE service_task = 'Maintenance'
+GROUP BY make, model, machine_type
+ORDER BY maintenance_count DESC
+LIMIT 5;
+
+Special Considerations
+
+
+Multiple Records: Same equipment_id may have different types of maintenance
+Frequency Analysis: Consider maintenance_frequency patterns for each machine type
+Hour Meter Readings: Use for calculating service intervals and compliance
+Equipment Categories: Group analysis by machine_type for meaningful insights
+Service Activities: Different activities have different frequency requirements
+Maintenance Planning: Focus on next_due_hmr vs last_serviced_hmr for scheduling
+Equipment Fleet: Analysis by make and model for fleet management
+Preventive Maintenance: Patterns in scheduled service activities
+
+
+
+1. Service Interval Calculations:
+    Actual service intervals must be calculated using consecutive last_serviced_hmr readings
+    Use LAG() window function to get previous service timestamp for each equipment_id
+    Always PARTITION BY equipment_id when calculating intervals
+    Order by last_serviced_hmr for accurate sequential analysis
+
+
+2. Query Construction Guidelines
+WITH service_intervals AS (
+  SELECT equipment_id,
+         last_serviced_hmr,
+         last_serviced_hmr - LAG(last_serviced_hmr) OVER (
+           PARTITION BY equipment_id 
+           ORDER BY last_serviced_hmr
+         ) as actual_interval
+  FROM maintenance_data
+  WHERE conditions...
+)
+
+3. Key Analysis Patterns
+    Group results by equipment_id to show per-machine patterns
+    Calculate AVG(), MIN(), MAX() of intervals for each equipment
+    Compare actual intervals against maintenance_frequency values
+    Count number of services per equipment for context
+
+
+4. Important Considerations
+    Filter by specific combinations of:
+        make
+        model
+        service_activity
+        machine_type
+    Exclude first service record per equipment (where LAG returns NULL)
+    Consider equipment usage patterns in different contexts
+    Account for multiple units of same make/model
+
+5. Common Time-Based Calculations
+    Actual service interval = current last_serviced_hmr - previous last_serviced_hmr
+    Service compliance = next_due_hmr - last_serviced_hmr
+    Service delay = actual interval - maintenance_frequency
+
+
+6. Data Interpretation Guidelines
+
+    Compare prescribed frequency (maintenance_frequency) vs actual intervals
+    Analyze variations in service intervals across similar equipment
+    Consider operational context when interpreting intervals
+    Look for patterns in service timing and frequency
+
+Example Query: 
+Whats the filter change frequency for JCB 3DX
+    how to solve? filter out with make JCB and model 3DX.
+    now in the list, using equipment_id group them 
+    for each equipment_id, you sort them based on last_serviced_hmr and then calculate their differences. This diff is the actual hours used between each maintenance. 
+    Do this for all equipment_ids seperately. 
+    Print out equipment_id, expected_maintenance_frequency, actual_frequency for all JCB 3DXs
+
+WITH filtered_services AS (
+    SELECT 
+        equipment_id,
+        maintenance_frequency as expected_frequency,
+        last_serviced_hmr,
+        last_serviced_hmr - LAG(last_serviced_hmr) OVER (
+            PARTITION BY equipment_id 
+            ORDER BY last_serviced_hmr
+        ) as actual_interval
+    FROM maintenance_data
+    WHERE 
+        make = 'JCB' 
+        AND model = '3DX'
+        AND service_activity = 'Filter Change'
+),
+equipment_averages AS (
+    SELECT 
+        equipment_id,
+        MAX(expected_frequency) as expected_frequency,
+        AVG(actual_interval) as actual_frequency,
+        COUNT(*) as service_count
+    FROM filtered_services
+    WHERE actual_interval IS NOT NULL
+    GROUP BY equipment_id
+)
+SELECT 
+    equipment_id,
+    expected_frequency,
+    ROUND(actual_frequency, 2) as actual_frequency,
+    service_count as number_of_services
+FROM equipment_averages
+ORDER BY equipment_id;
